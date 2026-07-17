@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Airtable Live Sheet</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="toolbar">
+    <h1>Airtable Live Sheet</h1>
+    <div class="toolbar-right">
+      <span id="status" class="status status-connecting">Connecting…</span>
+      <button id="addRowBtn">+ Add row</button>
+      <button id="refreshBtn" title="Refresh now">Refresh</button>
+    </div>
+  </header>
+
+  <div id="errorBanner" class="error-banner hidden"></div>
+
+  <main>
+    <div class="table-wrap">
+      <table id="sheet">
+        <thead><tr id="headerRow"></tr></thead>
+        <tbody id="bodyRows"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
