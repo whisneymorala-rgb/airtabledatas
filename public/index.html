@@ -8,22 +8,31 @@
 </head>
 <body>
   <header class="toolbar">
-    <h1>Airtable Live Sheet</h1>
+    <div class="toolbar-title">
+      <h1>Airtable Live Sheet</h1>
+      <p class="subtitle">Edits here save to Airtable instantly. Changes made in Airtable show up here automatically.</p>
+    </div>
     <div class="toolbar-right">
-      <span id="status" class="status status-connecting">Connecting…</span>
-      <button id="addRowBtn">+ Add row</button>
-      <button id="refreshBtn" title="Refresh now">Refresh</button>
+      <span id="status" class="status status-connecting"><span class="status-dot"></span>Connecting…</span>
+      <button id="addRowBtn" class="btn-primary">+ Add row</button>
+      <button id="refreshBtn" class="btn-secondary" title="Refresh now">⟳ Refresh</button>
     </div>
   </header>
 
   <div id="errorBanner" class="error-banner hidden"></div>
 
   <main>
-    <div class="table-wrap">
-      <table id="sheet">
-        <thead><tr id="headerRow"></tr></thead>
-        <tbody id="bodyRows"></tbody>
-      </table>
+    <div class="card">
+      <div class="table-wrap">
+        <table id="sheet">
+          <thead><tr id="headerRow"></tr></thead>
+          <tbody id="bodyRows"></tbody>
+        </table>
+      </div>
+      <div id="emptyState" class="empty-state hidden">
+        <p><strong>No columns to show yet.</strong></p>
+        <p>Add a field to this table in Airtable, then hit Refresh.</p>
+      </div>
     </div>
   </main>
 

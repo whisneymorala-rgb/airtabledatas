@@ -31,11 +31,13 @@ const el = {
   addRowBtn: document.getElementById('addRowBtn'),
   refreshBtn: document.getElementById('refreshBtn'),
   errorBanner: document.getElementById('errorBanner'),
+  emptyState: document.getElementById('emptyState'),
+  table: document.getElementById('sheet'),
 };
 
 function setStatus(kind, text) {
   el.status.className = `status status-${kind}`;
-  el.status.textContent = text;
+  el.status.innerHTML = `<span class="status-dot"></span>${text}`;
 }
 
 function showError(msg) {
@@ -168,6 +170,11 @@ function cellInput(rec, col) {
 }
 
 function render() {
+  const hasColumns = state.columns.length > 0;
+  el.table.classList.toggle('hidden', !hasColumns);
+  el.emptyState.classList.toggle('hidden', hasColumns);
+  if (!hasColumns) return;
+
   el.headerRow.innerHTML = '';
   for (const col of state.columns) {
     const th = document.createElement('th');
