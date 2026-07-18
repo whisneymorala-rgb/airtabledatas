@@ -14,10 +14,32 @@
     </div>
     <div class="toolbar-right">
       <span id="status" class="status status-connecting"><span class="status-dot"></span>Connecting…</span>
+      <button id="themeToggle" class="btn-secondary" title="Toggle dark mode">🌙 Dark</button>
       <button id="addRowBtn" class="btn-primary">+ Add row</button>
       <button id="refreshBtn" class="btn-secondary" title="Refresh now">⟳ Refresh</button>
     </div>
   </header>
+
+  <div id="filtersBar" class="filters-bar">
+    <div id="searchWrap" class="filter-field">
+      <input type="text" id="searchInput" placeholder="Search by student name…" />
+    </div>
+    <div id="statusFilterWrap" class="filter-field hidden">
+      <select id="statusFilter"><option value="">All statuses</option></select>
+    </div>
+    <div id="completionFilterWrap" class="filter-field hidden">
+      <select id="completionFilter">
+        <option value="">All completion</option>
+        <option value="0-25">0–25%</option>
+        <option value="26-50">26–50%</option>
+        <option value="51-75">51–75%</option>
+        <option value="76-100">76–100%</option>
+      </select>
+    </div>
+    <div id="trendFilterWrap" class="filter-field hidden">
+      <select id="trendFilter"><option value="">All trends</option></select>
+    </div>
+  </div>
 
   <div id="errorBanner" class="error-banner hidden"></div>
 

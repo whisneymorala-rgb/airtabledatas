@@ -19,9 +19,12 @@ const READONLY_TYPES = new Set([
 ]);
 
 const state = {
-  columns: [], // [{key, name, type, choices, editable}]
+  columns: [], // [{id, key, name, type, choices, editable}]
   records: [], // [{id, fields}]
   schemaAvailable: false,
+  primaryFieldId: null,
+  filterCols: { name: null, status: null, completion: null, trend: null, lastActivity: null },
+  filters: { search: '', status: '', completion: '', trend: '' },
 };
 
 const el = {
@@ -30,9 +33,18 @@ const el = {
   bodyRows: document.getElementById('bodyRows'),
   addRowBtn: document.getElementById('addRowBtn'),
   refreshBtn: document.getElementById('refreshBtn'),
+  themeToggle: document.getElementById('themeToggle'),
   errorBanner: document.getElementById('errorBanner'),
   emptyState: document.getElementById('emptyState'),
   table: document.getElementById('sheet'),
+  searchWrap: document.getElementById('searchWrap'),
+  searchInput: document.getElementById('searchInput'),
+  statusFilterWrap: document.getElementById('statusFilterWrap'),
+  statusFilter: document.getElementById('statusFilter'),
+  completionFilterWrap: document.getElementById('completionFilterWrap'),
+  completionFilter: document.getElementById('completionFilter'),
+  trendFilterWrap: document.getElementById('trendFilterWrap'),
+  trendFilter: document.getElementById('trendFilter'),
 };
 
 function setStatus(kind, text) {
@@ -69,7 +81,9 @@ async function loadSchema() {
   const data = await api('/api/schema');
   if (data.available && Array.isArray(data.fields)) {
     state.schemaAvailable = true;
+    state.primaryFieldId = data.primaryFieldId || null;
     state.columns = data.fields.map((f) => ({
+      id: f.id,
       key: f.name,
       name: f.name,
       type: f.type,
@@ -88,7 +102,7 @@ function inferColumnsFromRecords() {
     for (const key of Object.keys(rec.fields || {})) {
       if (!seen.has(key)) {
         seen.add(key);
-        state.columns.push({ key, name: key, type: 'singleLineText', choices: null, editable: true });
+        state.columns.push({ id: null, key, name: key, type: 'singleLineText', choices: null, editable: true });
       }
     }
   }
@@ -99,6 +113,120 @@ async function loadRecords() {
   state.records = data.records || [];
   if (!state.schemaAvailable) inferColumnsFromRecords();
 }
+
+// --- Filter/badge/activity column detection -------------------------------
+
+function findColumn(regex) {
+  return state.columns.find((c) => regex.test(c.name)) || null;
+}
+
+function computeFilterColumns() {
+  const primaryCol = state.primaryFieldId ? state.columns.find((c) => c.id === state.primaryFieldId) : null;
+  state.filterCols = {
+    name: findColumn(/student.*name/i) || primaryCol || state.columns[0] || null,
+    status: findColumn(/^status$/i) || findColumn(/status/i),
+    completion: findColumn(/percent/i) || findColumn(/complet/i),
+    trend: findColumn(/trend/i),
+    lastActivity: findColumn(/last.*activity/i),
+  };
+}
+
+function fillSelect(selectEl, values, allLabel) {
+  const current = selectEl.value;
+  selectEl.innerHTML = '';
+  const allOpt = document.createElement('option');
+  allOpt.value = '';
+  allOpt.textContent = allLabel;
+  selectEl.appendChild(allOpt);
+  for (const v of values) {
+    const opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = v;
+    selectEl.appendChild(opt);
+  }
+  if (values.includes(current)) selectEl.value = current;
+}
+
+function uniqueValues(col) {
+  if (col.choices) return col.choices;
+  return [...new Set(state.records.map((r) => r.fields[col.key]).filter((v) => v != null && v !== ''))].sort();
+}
+
+function populateFilterOptions() {
+  el.searchWrap.classList.toggle('hidden', !state.filterCols.name);
+
+  if (state.filterCols.status) {
+    fillSelect(el.statusFilter, uniqueValues(state.filterCols.status), 'All statuses');
+    el.statusFilterWrap.classList.remove('hidden');
+  } else {
+    el.statusFilterWrap.classList.add('hidden');
+  }
+
+  el.completionFilterWrap.classList.toggle('hidden', !state.filterCols.completion);
+
+  if (state.filterCols.trend) {
+    fillSelect(el.trendFilter, uniqueValues(state.filterCols.trend), 'All trends');
+    el.trendFilterWrap.classList.remove('hidden');
+  } else {
+    el.trendFilterWrap.classList.add('hidden');
+  }
+}
+
+function matchesFilters(rec) {
+  const f = state.filters;
+  const cols = state.filterCols;
+
+  if (f.search && cols.name) {
+    const val = String(rec.fields[cols.name.key] ?? '').toLowerCase();
+    if (!val.includes(f.search.toLowerCase())) return false;
+  }
+  if (f.status && cols.status) {
+    if ((rec.fields[cols.status.key] ?? '') !== f.status) return false;
+  }
+  if (f.trend && cols.trend) {
+    if ((rec.fields[cols.trend.key] ?? '') !== f.trend) return false;
+  }
+  if (f.completion && cols.completion) {
+    const raw = rec.fields[cols.completion.key];
+    if (raw == null || raw === '') return false;
+    const pct = cols.completion.type === 'percent' ? Number(raw) * 100 : Number(raw);
+    const [min, max] = f.completion.split('-').map(Number);
+    if (Number.isNaN(pct) || pct < min || pct > max) return false;
+  }
+  return true;
+}
+
+// --- Status badge + activity dot helpers -----------------------------------
+
+function statusBadgeClass(value) {
+  const v = String(value || '').toLowerCase();
+  if (v.includes('inactive')) return 'badge-yellow';
+  if (v.includes('complet')) return 'badge-blue';
+  if (v.includes('active')) return 'badge-green';
+  return 'badge-neutral';
+}
+
+function activityDotClass(dateStr) {
+  if (!dateStr) return 'dot-red';
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return 'dot-red';
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfWeek = new Date(startOfToday);
+  startOfWeek.setDate(startOfWeek.getDate() - 6);
+  const activityDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  if (activityDay.getTime() === startOfToday.getTime()) return 'dot-green';
+  if (activityDay >= startOfWeek) return 'dot-yellow';
+  return 'dot-red';
+}
+
+function activityDotTitle(cls) {
+  if (cls === 'dot-green') return 'Active today';
+  if (cls === 'dot-yellow') return 'Active this week';
+  return 'No activity this week';
+}
+
+// --- Rendering ---------------------------------------------------------
 
 function cellInput(rec, col) {
   const value = rec.fields[col.key];
@@ -135,12 +263,16 @@ function cellInput(rec, col) {
     }
     input.addEventListener('change', () => commitCell(rec.id, col.key, input.value || null));
   } else if (['number', 'currency', 'percent', 'rating', 'duration'].includes(col.type)) {
+    // Airtable's API returns percent fields as a 0–1 decimal; show/edit as 0–100.
+    const isPercent = col.type === 'percent';
     input = document.createElement('input');
     input.type = 'number';
-    input.value = value ?? '';
+    if (isPercent) input.step = '0.1';
+    input.value = value == null || value === '' ? '' : isPercent ? Math.round(value * 1000) / 10 : value;
     input.addEventListener('blur', () => {
-      const num = input.value === '' ? null : Number(input.value);
-      commitCell(rec.id, col.key, num);
+      if (input.value === '') return commitCell(rec.id, col.key, null);
+      const num = Number(input.value);
+      commitCell(rec.id, col.key, isPercent ? num / 100 : num);
     });
   } else if (col.type === 'multilineText') {
     input = document.createElement('textarea');
@@ -165,6 +297,30 @@ function cellInput(rec, col) {
     if (e.key === 'Enter' && input.tagName !== 'TEXTAREA') input.blur();
   });
 
+  // Status column: style the dropdown as a colored badge instead of plain text.
+  if (col === state.filterCols.status && input.tagName === 'SELECT') {
+    const applyBadge = () => {
+      input.classList.remove('badge-green', 'badge-yellow', 'badge-blue', 'badge-neutral');
+      input.classList.add('status-badge', statusBadgeClass(input.value));
+    };
+    applyBadge();
+    input.addEventListener('change', applyBadge);
+  }
+
+  // Last-activity column: prepend a recency dot (green/yellow/red).
+  if (col === state.filterCols.lastActivity) {
+    const dotClass = activityDotClass(value);
+    const wrap = document.createElement('div');
+    wrap.className = 'activity-cell';
+    const dot = document.createElement('span');
+    dot.className = `activity-dot ${dotClass}`;
+    dot.title = activityDotTitle(dotClass);
+    wrap.appendChild(dot);
+    wrap.appendChild(input);
+    td.appendChild(wrap);
+    return td;
+  }
+
   td.appendChild(input);
   return td;
 }
@@ -188,8 +344,21 @@ function render() {
   const focusKey = activeCellKey();
   const caretPos = document.activeElement?.selectionStart;
 
+  const visibleRecords = state.records.filter(matchesFilters);
+
   el.bodyRows.innerHTML = '';
-  for (const rec of state.records) {
+
+  if (visibleRecords.length === 0 && state.records.length > 0) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.className = 'no-results';
+    td.colSpan = state.columns.length + 1;
+    td.textContent = 'No rows match your filters.';
+    tr.appendChild(td);
+    el.bodyRows.appendChild(tr);
+  }
+
+  for (const rec of visibleRecords) {
     const tr = document.createElement('tr');
     for (const col of state.columns) {
       tr.appendChild(cellInput(rec, col));
@@ -274,6 +443,8 @@ async function poll() {
       state.records = incoming;
       inferColumnsFromRecords();
       if (state.columns.length !== before) {
+        computeFilterColumns();
+        populateFilterOptions();
         render();
         setStatus('synced', 'Synced');
         return;
@@ -287,6 +458,7 @@ async function poll() {
     } else {
       state.records = incoming;
     }
+    populateFilterOptions();
     render();
     setStatus('synced', 'Synced');
     showError(null);
@@ -296,6 +468,56 @@ async function poll() {
   }
 }
 
+// --- Filter control wiring -----------------------------------------------
+
+let searchDebounce;
+el.searchInput.addEventListener('input', () => {
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(() => {
+    state.filters.search = el.searchInput.value.trim();
+    render();
+  }, 150);
+});
+el.statusFilter.addEventListener('change', () => {
+  state.filters.status = el.statusFilter.value;
+  render();
+});
+el.completionFilter.addEventListener('change', () => {
+  state.filters.completion = el.completionFilter.value;
+  render();
+});
+el.trendFilter.addEventListener('change', () => {
+  state.filters.trend = el.trendFilter.value;
+  render();
+});
+
+// --- Dark mode -------------------------------------------------------------
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  localStorage.setItem('theme', theme);
+  el.themeToggle.textContent = theme === 'dark' ? '☀️ Light' : '🌙 Dark';
+}
+
+el.themeToggle.addEventListener('click', () => {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  applyTheme(next);
+});
+
+(function initTheme() {
+  const saved = localStorage.getItem('theme');
+  const preferred = window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  applyTheme(saved || preferred);
+})();
+
+// Keep the filters bar pinned directly below the toolbar, whatever height it wraps to.
+function syncStickyOffset() {
+  const toolbar = document.querySelector('.toolbar');
+  document.documentElement.style.setProperty('--toolbar-h', `${toolbar.offsetHeight}px`);
+}
+window.addEventListener('resize', syncStickyOffset);
+syncStickyOffset();
+
 el.addRowBtn.addEventListener('click', addRow);
 el.refreshBtn.addEventListener('click', poll);
 
@@ -303,11 +525,14 @@ el.refreshBtn.addEventListener('click', poll);
   try {
     await loadSchema();
     await loadRecords();
+    computeFilterColumns();
+    populateFilterOptions();
     render();
     setStatus('synced', 'Synced');
   } catch (err) {
     setStatus('error', 'Error');
     showError(`Startup failed: ${err.message}`);
   }
+  syncStickyOffset();
   setInterval(poll, POLL_MS);
 })();
