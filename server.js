@@ -3,22 +3,13 @@ const express = require('express');
 const path = require('path');
 const { getConfig, recordsUrl, metaUrl, airtableRequest } = require('./lib/airtable');
 
-try {
-  getConfig();
-} catch (err) {
-  console.error(`${err.message}\nCopy .env.example to .env and fill in your Airtable values.`);
-  process.exit(1);
-}
-
-const { AIRTABLE_TABLE_ID, AIRTABLE_VIEW_ID } = process.env;
-const { PORT = 3000 } = process.env;
-
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/api/schema', async (req, res) => {
   try {
+    const { AIRTABLE_TABLE_ID } = getConfig();
     const data = await airtableRequest(metaUrl());
     const table = (data.tables || []).find((t) => t.id === AIRTABLE_TABLE_ID);
     if (!table) return res.json({ available: false });
@@ -30,6 +21,7 @@ app.get('/api/schema', async (req, res) => {
 
 app.get('/api/records', async (req, res) => {
   try {
+    const { AIRTABLE_VIEW_ID } = getConfig();
     let all = [];
     let offset;
     do {
@@ -90,6 +82,15 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Airtable live sheet running at http://localhost:${PORT}`);
-});
+// Only listen on a port for local `npm start` — on Vercel the app is
+// invoked as a serverless function per-request, and calling app.listen()
+// there would do nothing useful (and once did nothing harmful, but it's
+// not the entry point Vercel actually uses).
+if (!process.env.VERCEL) {
+  const { PORT = 3000 } = process.env;
+  app.listen(PORT, () => {
+    console.log(`Airtable live sheet running at http://localhost:${PORT}`);
+  });
+}
+
+module.exports = app;
