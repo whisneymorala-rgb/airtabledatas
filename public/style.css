@@ -285,6 +285,7 @@ select.status-badge {
 select.status-badge.badge-green { background-color: var(--ok-bg); color: var(--ok); border-color: #8fe0a8; }
 select.status-badge.badge-yellow { background-color: var(--warn-bg); color: var(--warn); border-color: #eecb6e; }
 select.status-badge.badge-blue { background-color: var(--blue-bg); color: var(--blue); border-color: #93c5fd; }
+select.status-badge.badge-red { background-color: var(--danger-bg); color: var(--danger); border-color: #f2a6a6; }
 select.status-badge.badge-neutral { background-color: var(--header-bg); color: var(--text-muted); border-color: var(--border-strong); }
 
 /* Activity recency dot next to the last-activity-date cell */
@@ -305,18 +306,27 @@ select.status-badge.badge-neutral { background-color: var(--header-bg); color: v
 .activity-dot.dot-yellow { background: #f5b400; }
 .activity-dot.dot-red { background: #ef4444; }
 
-.row-actions { text-align: center; width: 40px; min-width: 40px; }
+.row-actions { text-align: center; min-width: 40px; }
 .delete-btn {
   border: none;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
   font-size: 14px;
-  padding: 6px;
+  padding: 6px 8px;
   border-radius: 6px;
   line-height: 1;
+  white-space: nowrap;
 }
 .delete-btn:hover { background: var(--danger-bg); color: var(--danger); }
+.delete-btn.delete-armed {
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 10px;
+}
+.delete-btn.delete-armed:hover { background: var(--danger); color: #fff; }
 
 .cell-saving { background: var(--warn-bg) !important; }
 .cell-error { background: var(--danger-bg) !important; }

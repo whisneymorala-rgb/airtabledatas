@@ -200,6 +200,7 @@ function matchesFilters(rec) {
 
 function statusBadgeClass(value) {
   const v = String(value || '').toLowerCase();
+  if (v.includes('at-risk') || v.includes('at risk')) return 'badge-red';
   if (v.includes('inactive')) return 'badge-yellow';
   if (v.includes('complet')) return 'badge-blue';
   if (v.includes('active')) return 'badge-green';
@@ -300,7 +301,7 @@ function cellInput(rec, col) {
   // Status column: style the dropdown as a colored badge instead of plain text.
   if (col === state.filterCols.status && input.tagName === 'SELECT') {
     const applyBadge = () => {
-      input.classList.remove('badge-green', 'badge-yellow', 'badge-blue', 'badge-neutral');
+      input.classList.remove('badge-green', 'badge-yellow', 'badge-blue', 'badge-red', 'badge-neutral');
       input.classList.add('status-badge', statusBadgeClass(input.value));
     };
     applyBadge();
@@ -369,7 +370,7 @@ function render() {
     delBtn.className = 'delete-btn';
     delBtn.textContent = '✕';
     delBtn.title = 'Delete row';
-    delBtn.addEventListener('click', () => deleteRow(rec.id));
+    delBtn.addEventListener('click', () => handleDeleteClick(delBtn, rec.id));
     actionsTd.appendChild(delBtn);
     tr.appendChild(actionsTd);
     el.bodyRows.appendChild(tr);
@@ -420,8 +421,32 @@ async function addRow() {
   }
 }
 
+const DELETE_ARM_MS = 3000;
+
+// Two-step delete guard: first click arms the button (turns red, "Confirm?"),
+// second click within DELETE_ARM_MS actually deletes. A stray single click
+// on a densely packed row of delete buttons never deletes anything.
+function handleDeleteClick(btn, recordId) {
+  if (btn.dataset.armed === 'true') {
+    clearTimeout(Number(btn.dataset.armTimer));
+    deleteRow(recordId);
+    return;
+  }
+  btn.dataset.armed = 'true';
+  btn.textContent = 'Confirm?';
+  btn.classList.add('delete-armed');
+  btn.title = 'Click again to permanently delete this row';
+  btn.dataset.armTimer = String(setTimeout(() => disarmDeleteBtn(btn), DELETE_ARM_MS));
+}
+
+function disarmDeleteBtn(btn) {
+  btn.dataset.armed = 'false';
+  btn.textContent = '✕';
+  btn.classList.remove('delete-armed');
+  btn.title = 'Delete row';
+}
+
 async function deleteRow(recordId) {
-  if (!confirm('Delete this row from Airtable?')) return;
   try {
     await api(`/api/records/${recordId}`, { method: 'DELETE' });
     state.records = state.records.filter((r) => r.id !== recordId);
