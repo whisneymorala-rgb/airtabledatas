@@ -18,6 +18,9 @@ const READONLY_TYPES = new Set([
   'externalSyncSource',
 ]);
 
+const RECENTLY_DELETED_KEY = 'airtableLiveSheet.recentlyDeleted';
+const MAX_RECENTLY_DELETED = 15;
+
 const state = {
   columns: [], // [{id, key, name, type, choices, editable}]
   records: [], // [{id, fields}]
@@ -25,6 +28,7 @@ const state = {
   primaryFieldId: null,
   filterCols: { name: null, status: null, completion: null, trend: null, lastActivity: null },
   filters: { search: '', status: '', completion: '', trend: '' },
+  recentlyDeleted: [], // [{fields, label, deletedAt}], most recent first
 };
 
 const el = {
@@ -45,6 +49,9 @@ const el = {
   completionFilter: document.getElementById('completionFilter'),
   trendFilterWrap: document.getElementById('trendFilterWrap'),
   trendFilter: document.getElementById('trendFilter'),
+  undoBtn: document.getElementById('undoBtn'),
+  undoPanel: document.getElementById('undoPanel'),
+  undoToast: document.getElementById('undoToast'),
 };
 
 function setStatus(kind, text) {
@@ -447,14 +454,143 @@ function disarmDeleteBtn(btn) {
 }
 
 async function deleteRow(recordId) {
+  const rec = state.records.find((r) => r.id === recordId);
   try {
     await api(`/api/records/${recordId}`, { method: 'DELETE' });
     state.records = state.records.filter((r) => r.id !== recordId);
+    if (rec) rememberDeleted(rec);
     render();
   } catch (err) {
     showError(`Could not delete row: ${err.message}`);
   }
 }
+
+// --- Undo delete -----------------------------------------------------------
+// Airtable's API has no "undelete" endpoint, so this keeps its own snapshot
+// of anything deleted through this app (persisted to localStorage so it
+// survives a page reload) and restores it by creating a fresh record with
+// the same field values. Only protects deletions made after this shipped —
+// there was never a copy of anything deleted before it.
+
+function loadRecentlyDeleted() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RECENTLY_DELETED_KEY) || '[]');
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentlyDeleted() {
+  localStorage.setItem(RECENTLY_DELETED_KEY, JSON.stringify(state.recentlyDeleted));
+}
+
+function editableFieldsOnly(fields) {
+  const out = {};
+  for (const col of state.columns) {
+    if (col.editable && fields[col.key] !== undefined) out[col.key] = fields[col.key];
+  }
+  return out;
+}
+
+function rememberDeleted(rec) {
+  const nameCol = state.filterCols.name || state.columns[0];
+  const label = nameCol ? rec.fields[nameCol.key] : null;
+  state.recentlyDeleted.unshift({
+    fields: rec.fields,
+    label: label != null && label !== '' ? String(label) : 'Untitled row',
+    deletedAt: Date.now(),
+  });
+  state.recentlyDeleted = state.recentlyDeleted.slice(0, MAX_RECENTLY_DELETED);
+  saveRecentlyDeleted();
+  renderUndoButton();
+  showUndoToast(state.recentlyDeleted[0]);
+}
+
+async function restoreDeleted(index) {
+  const entry = state.recentlyDeleted[index];
+  if (!entry) return;
+  try {
+    const created = await api('/api/records', {
+      method: 'POST',
+      body: JSON.stringify({ fields: editableFieldsOnly(entry.fields) }),
+    });
+    state.records.push(created);
+    state.recentlyDeleted.splice(index, 1);
+    saveRecentlyDeleted();
+    renderUndoButton();
+    render();
+    hideUndoToast();
+  } catch (err) {
+    showError(`Could not restore "${entry.label}": ${err.message}`);
+  }
+}
+
+function relativeTime(ts) {
+  const secs = Math.round((Date.now() - ts) / 1000);
+  if (secs < 60) return 'just now';
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function renderUndoButton() {
+  const count = state.recentlyDeleted.length;
+  el.undoBtn.classList.toggle('hidden', count === 0);
+  el.undoBtn.textContent = count > 0 ? `↺ Undo delete (${count})` : '↺ Undo delete';
+  if (count === 0) el.undoPanel.classList.add('hidden');
+  renderUndoPanel();
+}
+
+function renderUndoPanel() {
+  el.undoPanel.innerHTML = '';
+  state.recentlyDeleted.forEach((entry, i) => {
+    const row = document.createElement('div');
+    row.className = 'undo-row';
+    const info = document.createElement('span');
+    info.className = 'undo-row-label';
+    info.textContent = `${entry.label} · ${relativeTime(entry.deletedAt)}`;
+    const restoreBtn = document.createElement('button');
+    restoreBtn.className = 'undo-row-restore';
+    restoreBtn.textContent = 'Restore';
+    restoreBtn.addEventListener('click', () => restoreDeleted(i));
+    row.appendChild(info);
+    row.appendChild(restoreBtn);
+    el.undoPanel.appendChild(row);
+  });
+}
+
+let toastTimer;
+function showUndoToast(entry) {
+  clearTimeout(toastTimer);
+  el.undoToast.innerHTML = '';
+  const text = document.createElement('span');
+  text.textContent = `Deleted "${entry.label}". `;
+  const undoLink = document.createElement('button');
+  undoLink.className = 'undo-toast-btn';
+  undoLink.textContent = 'Undo';
+  undoLink.addEventListener('click', () => restoreDeleted(0));
+  text.appendChild(undoLink);
+  el.undoToast.appendChild(text);
+  el.undoToast.classList.remove('hidden');
+  toastTimer = setTimeout(hideUndoToast, 8000);
+}
+
+function hideUndoToast() {
+  clearTimeout(toastTimer);
+  el.undoToast.classList.add('hidden');
+}
+
+el.undoBtn.addEventListener('click', () => {
+  el.undoPanel.classList.toggle('hidden');
+});
+document.addEventListener('click', (e) => {
+  if (!el.undoPanel.contains(e.target) && e.target !== el.undoBtn) {
+    el.undoPanel.classList.add('hidden');
+  }
+});
 
 async function poll() {
   try {
@@ -545,6 +681,9 @@ syncStickyOffset();
 
 el.addRowBtn.addEventListener('click', addRow);
 el.refreshBtn.addEventListener('click', poll);
+
+state.recentlyDeleted = loadRecentlyDeleted();
+renderUndoButton();
 
 (async function init() {
   try {

@@ -126,6 +126,79 @@ button:active { transform: translateY(1px); }
 .status-saving { color: var(--warn); border-color: #eecb6e; background: var(--warn-bg); }
 .status-error { color: var(--danger); border-color: #f2a6a6; background: var(--danger-bg); }
 
+.undo-wrap { position: relative; }
+
+.undo-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 280px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--card-bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  z-index: 20;
+  padding: 6px;
+}
+
+.undo-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+.undo-row:hover { background: var(--header-bg); }
+.undo-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.undo-row-restore {
+  border: 1px solid var(--border-strong);
+  background: var(--card-bg);
+  color: var(--accent);
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.undo-row-restore:hover { background: var(--blue-bg); }
+
+.undo-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #23272f;
+  color: #f3f4f6;
+  padding: 12px 18px;
+  border-radius: 10px;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.undo-toast-btn {
+  border: none;
+  background: transparent;
+  color: #8ab4ff;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
 .filters-bar {
   display: flex;
   flex-wrap: wrap;
