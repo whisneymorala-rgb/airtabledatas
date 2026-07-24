@@ -20,6 +20,8 @@ const READONLY_TYPES = new Set([
 
 const RECENTLY_DELETED_KEY = 'airtableLiveSheet.recentlyDeleted';
 const MAX_RECENTLY_DELETED = 15;
+const HISTORY_KEY = 'airtableLiveSheet.history';
+const MAX_HISTORY = 200;
 
 const state = {
   columns: [], // [{id, key, name, type, choices, editable}]
@@ -29,6 +31,7 @@ const state = {
   filterCols: { name: null, status: null, completion: null, trend: null, lastActivity: null },
   filters: { search: '', status: '', completion: '', trend: '' },
   recentlyDeleted: [], // [{fields, label, deletedAt}], most recent first
+  history: [], // [{type, label, field, oldValue, newValue, at}], most recent first
 };
 
 const el = {
@@ -52,6 +55,8 @@ const el = {
   undoBtn: document.getElementById('undoBtn'),
   undoPanel: document.getElementById('undoPanel'),
   undoToast: document.getElementById('undoToast'),
+  historyBtn: document.getElementById('historyBtn'),
+  historyPanel: document.getElementById('historyPanel'),
 };
 
 function setStatus(kind, text) {
@@ -399,6 +404,7 @@ function render() {
 
 async function commitCell(recordId, field, value) {
   const rec = state.records.find((r) => r.id === recordId);
+  const oldValue = rec ? rec.fields[field] : undefined;
   if (rec) rec.fields[field] = value;
   setStatus('saving', 'Saving…');
   try {
@@ -409,10 +415,19 @@ async function commitCell(recordId, field, value) {
     if (rec) rec.fields = updated.fields;
     setStatus('synced', 'Synced');
     showError(null);
+    if (rec && oldValue !== value) {
+      pushHistory({ type: 'edit', label: recordLabel(rec), field, oldValue, newValue: value });
+    }
   } catch (err) {
     setStatus('error', 'Save failed');
     showError(`Could not save "${field}": ${err.message}`);
   }
+}
+
+function recordLabel(rec) {
+  const nameCol = state.filterCols.name || state.columns[0];
+  const label = nameCol ? rec.fields[nameCol.key] : null;
+  return label != null && label !== '' ? String(label) : 'Untitled row';
 }
 
 async function addRow() {
@@ -422,6 +437,7 @@ async function addRow() {
       body: JSON.stringify({ fields: {} }),
     });
     state.records.push(created);
+    pushHistory({ type: 'create', label: recordLabel(created) });
     render();
   } catch (err) {
     showError(`Could not add row: ${err.message}`);
@@ -494,17 +510,17 @@ function editableFieldsOnly(fields) {
 }
 
 function rememberDeleted(rec) {
-  const nameCol = state.filterCols.name || state.columns[0];
-  const label = nameCol ? rec.fields[nameCol.key] : null;
+  const label = recordLabel(rec);
   state.recentlyDeleted.unshift({
     fields: rec.fields,
-    label: label != null && label !== '' ? String(label) : 'Untitled row',
+    label,
     deletedAt: Date.now(),
   });
   state.recentlyDeleted = state.recentlyDeleted.slice(0, MAX_RECENTLY_DELETED);
   saveRecentlyDeleted();
   renderUndoButton();
   showUndoToast(state.recentlyDeleted[0]);
+  pushHistory({ type: 'delete', label });
 }
 
 async function restoreDeleted(index) {
@@ -521,6 +537,7 @@ async function restoreDeleted(index) {
     renderUndoButton();
     render();
     hideUndoToast();
+    pushHistory({ type: 'restore', label: entry.label });
   } catch (err) {
     showError(`Could not restore "${entry.label}": ${err.message}`);
   }
@@ -590,6 +607,105 @@ document.addEventListener('click', (e) => {
   if (!el.undoPanel.contains(e.target) && e.target !== el.undoBtn) {
     el.undoPanel.classList.add('hidden');
   }
+  if (!el.historyPanel.contains(e.target) && e.target !== el.historyBtn) {
+    el.historyPanel.classList.add('hidden');
+  }
+});
+
+// --- Edit history ------------------------------------------------------
+// A local audit log of every change made through this app (field edits,
+// row creates/deletes/restores). Airtable's own revision history isn't
+// exposed over the REST API, so this is the app's own record of "what
+// changed here" — persisted to localStorage, capped at MAX_HISTORY entries.
+
+function loadHistory() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory() {
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(state.history));
+}
+
+function pushHistory(entry) {
+  state.history.unshift({ ...entry, at: Date.now() });
+  state.history = state.history.slice(0, MAX_HISTORY);
+  saveHistory();
+  renderHistoryPanel();
+}
+
+function clearHistory() {
+  state.history = [];
+  saveHistory();
+  renderHistoryPanel();
+}
+
+function formatHistoryValue(v) {
+  if (v == null || v === '') return '—';
+  if (Array.isArray(v)) return v.join(', ');
+  if (typeof v === 'boolean') return v ? 'checked' : 'unchecked';
+  return String(v);
+}
+
+const HISTORY_TAGS = {
+  edit: 'EDIT',
+  create: 'ADDED',
+  delete: 'DELETED',
+  restore: 'RESTORED',
+};
+
+function renderHistoryPanel() {
+  el.historyPanel.innerHTML = '';
+
+  if (state.history.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'dropdown-empty';
+    empty.textContent = 'No edits yet.';
+    el.historyPanel.appendChild(empty);
+    return;
+  }
+
+  const clearBtn = document.createElement('button');
+  clearBtn.className = 'dropdown-clear';
+  clearBtn.textContent = 'Clear history';
+  clearBtn.addEventListener('click', clearHistory);
+  el.historyPanel.appendChild(clearBtn);
+
+  for (const entry of state.history) {
+    const row = document.createElement('div');
+    row.className = 'history-row';
+
+    const main = document.createElement('div');
+    main.className = 'history-row-main';
+    const tag = document.createElement('span');
+    tag.className = `history-tag tag-${entry.type}`;
+    tag.textContent = HISTORY_TAGS[entry.type] || entry.type;
+    main.appendChild(tag);
+    main.appendChild(document.createTextNode(entry.label + (entry.field ? ` · ${entry.field}` : '')));
+    row.appendChild(main);
+
+    if (entry.type === 'edit') {
+      const change = document.createElement('div');
+      change.className = 'history-row-change';
+      change.textContent = `${formatHistoryValue(entry.oldValue)} → ${formatHistoryValue(entry.newValue)}`;
+      row.appendChild(change);
+    }
+
+    const time = document.createElement('div');
+    time.className = 'history-row-time';
+    time.textContent = relativeTime(entry.at);
+    row.appendChild(time);
+
+    el.historyPanel.appendChild(row);
+  }
+}
+
+el.historyBtn.addEventListener('click', () => {
+  el.historyPanel.classList.toggle('hidden');
 });
 
 async function poll() {
@@ -684,6 +800,8 @@ el.refreshBtn.addEventListener('click', poll);
 
 state.recentlyDeleted = loadRecentlyDeleted();
 renderUndoButton();
+state.history = loadHistory();
+renderHistoryPanel();
 
 (async function init() {
   try {

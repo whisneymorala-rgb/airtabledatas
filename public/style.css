@@ -128,12 +128,12 @@ button:active { transform: translateY(1px); }
 
 .undo-wrap { position: relative; }
 
-.undo-panel {
+.dropdown-panel {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  width: 280px;
-  max-height: 320px;
+  width: 300px;
+  max-height: 360px;
   overflow-y: auto;
   background: var(--card-bg);
   border: 1px solid var(--border-strong);
@@ -142,6 +142,26 @@ button:active { transform: translateY(1px); }
   z-index: 20;
   padding: 6px;
 }
+
+.dropdown-empty {
+  padding: 16px 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.dropdown-clear {
+  display: block;
+  width: 100%;
+  text-align: right;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 4px 8px 8px;
+}
+.dropdown-clear:hover { color: var(--danger); }
 
 .undo-row {
   display: flex;
@@ -171,6 +191,46 @@ button:active { transform: translateY(1px); }
   flex-shrink: 0;
 }
 .undo-row-restore:hover { background: var(--blue-bg); }
+
+.history-row {
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.history-row:last-child { border-bottom: none; }
+.history-row:hover { background: var(--header-bg); }
+.history-row-main {
+  color: var(--text);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.history-row-change {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-row-time {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-top: 2px;
+}
+.history-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.history-tag.tag-edit { background: var(--blue-bg); color: var(--blue); }
+.history-tag.tag-create { background: var(--ok-bg); color: var(--ok); }
+.history-tag.tag-delete { background: var(--danger-bg); color: var(--danger); }
+.history-tag.tag-restore { background: var(--warn-bg); color: var(--warn); }
 
 .undo-toast {
   position: fixed;
