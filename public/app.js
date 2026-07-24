@@ -619,6 +619,23 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// Ctrl/Cmd+Z restores the most recently deleted row. Skipped while a
+// text-editable field is focused so the browser's own native undo (for
+// whatever you're mid-typing there) keeps working as expected.
+document.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z' || e.shiftKey) return;
+  const active = document.activeElement;
+  const isTextEditable =
+    active &&
+    (active.tagName === 'TEXTAREA' ||
+      active.isContentEditable ||
+      (active.tagName === 'INPUT' && active.type !== 'checkbox'));
+  if (isTextEditable) return;
+  if (state.recentlyDeleted.length === 0) return;
+  e.preventDefault();
+  restoreDeleted(0);
+});
+
 // --- Edit history ------------------------------------------------------
 // A local audit log of every change made through this app (field edits,
 // row creates/deletes/restores). Airtable's own revision history isn't
