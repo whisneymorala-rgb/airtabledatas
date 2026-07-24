@@ -555,14 +555,21 @@ function relativeTime(ts) {
 
 function renderUndoButton() {
   const count = state.recentlyDeleted.length;
-  el.undoBtn.classList.toggle('hidden', count === 0);
   el.undoBtn.textContent = count > 0 ? `↺ Undo delete (${count})` : '↺ Undo delete';
-  if (count === 0) el.undoPanel.classList.add('hidden');
   renderUndoPanel();
 }
 
 function renderUndoPanel() {
   el.undoPanel.innerHTML = '';
+
+  if (state.recentlyDeleted.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'dropdown-empty';
+    empty.textContent = 'Nothing to undo yet.';
+    el.undoPanel.appendChild(empty);
+    return;
+  }
+
   state.recentlyDeleted.forEach((entry, i) => {
     const row = document.createElement('div');
     row.className = 'undo-row';
@@ -708,6 +715,19 @@ el.historyBtn.addEventListener('click', () => {
   el.historyPanel.classList.toggle('hidden');
 });
 
+// True while the focused cell is a free-text input that only commits on
+// blur (text/number/textarea) — as opposed to selects/checkboxes/dates,
+// which commit immediately on change and so have nothing "in progress" to
+// lose. Rebuilding the table mid-keystroke would wipe out whatever's been
+// typed but not yet committed, since render() only knows about state.records
+// (last-saved values), not whatever the live DOM input currently holds.
+function isMidTextEdit() {
+  const active = document.activeElement;
+  if (!active || !active.dataset || !active.dataset.recordId) return false;
+  if (active.tagName === 'TEXTAREA') return true;
+  return active.tagName === 'INPUT' && (active.type === 'text' || active.type === 'number');
+}
+
 async function poll() {
   try {
     const data = await api('/api/records');
@@ -719,7 +739,7 @@ async function poll() {
       const before = state.columns.length;
       state.records = incoming;
       inferColumnsFromRecords();
-      if (state.columns.length !== before) {
+      if (state.columns.length !== before && !isMidTextEdit()) {
         computeFilterColumns();
         populateFilterOptions();
         render();
@@ -735,6 +755,15 @@ async function poll() {
     } else {
       state.records = incoming;
     }
+
+    if (isMidTextEdit()) {
+      // Data is refreshed in the background; the DOM stays untouched until
+      // the field is blurred, so in-progress typing is never interrupted.
+      setStatus('synced', 'Synced');
+      showError(null);
+      return;
+    }
+
     populateFilterOptions();
     render();
     setStatus('synced', 'Synced');
