@@ -95,6 +95,11 @@ button {
 }
 button:hover { background: var(--header-bg); }
 button:active { transform: translateY(1px); }
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}
 
 .btn-primary {
   background: var(--accent);

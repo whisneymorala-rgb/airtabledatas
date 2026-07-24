@@ -22,6 +22,7 @@ const RECENTLY_DELETED_KEY = 'airtableLiveSheet.recentlyDeleted';
 const MAX_RECENTLY_DELETED = 15;
 const HISTORY_KEY = 'airtableLiveSheet.history';
 const MAX_HISTORY = 200;
+const MAX_UNDO_STACK = 50;
 
 const state = {
   columns: [], // [{id, key, name, type, choices, editable}]
@@ -30,8 +31,10 @@ const state = {
   primaryFieldId: null,
   filterCols: { name: null, status: null, completion: null, trend: null, lastActivity: null },
   filters: { search: '', status: '', completion: '', trend: '' },
-  recentlyDeleted: [], // [{fields, label, deletedAt}], most recent first
-  history: [], // [{type, label, field, oldValue, newValue, at}], most recent first
+  recentlyDeleted: [], // [{fields, label, deletedAt}], most recent first — for the "Recently deleted" panel
+  history: [], // [{type, label, field, oldValue, newValue, at}], most recent first — read-only audit log
+  undoStack: [], // [{op: 'edit'|'create'|'delete', recordId, field, oldValue, newValue, fields, label}] — session-only, not persisted
+  redoStack: [],
 };
 
 const el = {
@@ -57,6 +60,8 @@ const el = {
   undoToast: document.getElementById('undoToast'),
   historyBtn: document.getElementById('historyBtn'),
   historyPanel: document.getElementById('historyPanel'),
+  generalUndoBtn: document.getElementById('generalUndoBtn'),
+  generalRedoBtn: document.getElementById('generalRedoBtn'),
 };
 
 function setStatus(kind, text) {
@@ -417,6 +422,7 @@ async function commitCell(recordId, field, value) {
     showError(null);
     if (rec && oldValue !== value) {
       pushHistory({ type: 'edit', label: recordLabel(rec), field, oldValue, newValue: value });
+      pushUndo({ op: 'edit', recordId, field, oldValue, newValue: value, label: recordLabel(rec) });
     }
   } catch (err) {
     setStatus('error', 'Save failed');
@@ -438,6 +444,7 @@ async function addRow() {
     });
     state.records.push(created);
     pushHistory({ type: 'create', label: recordLabel(created) });
+    pushUndo({ op: 'create', recordId: created.id, fields: created.fields, label: recordLabel(created) });
     render();
   } catch (err) {
     showError(`Could not add row: ${err.message}`);
@@ -474,7 +481,10 @@ async function deleteRow(recordId) {
   try {
     await api(`/api/records/${recordId}`, { method: 'DELETE' });
     state.records = state.records.filter((r) => r.id !== recordId);
-    if (rec) rememberDeleted(rec);
+    if (rec) {
+      rememberDeleted(rec);
+      pushUndo({ op: 'delete', recordId, fields: rec.fields, label: recordLabel(rec) });
+    }
     render();
   } catch (err) {
     showError(`Could not delete row: ${err.message}`);
@@ -538,9 +548,130 @@ async function restoreDeleted(index) {
     render();
     hideUndoToast();
     pushHistory({ type: 'restore', label: entry.label });
+    // This delete is now resolved manually — drop any matching pending
+    // undo/redo entry so Ctrl+Z later doesn't try to restore it a second
+    // time (which would create a duplicate row).
+    state.undoStack = state.undoStack.filter((a) => a.fields !== entry.fields);
+    state.redoStack = state.redoStack.filter((a) => a.fields !== entry.fields);
+    renderUndoRedoButtons();
   } catch (err) {
     showError(`Could not restore "${entry.label}": ${err.message}`);
   }
+}
+
+// --- General undo/redo (every action) --------------------------------------
+// A linear undo/redo stack covering edits, row adds, and deletes — Ctrl+Z /
+// Ctrl+Shift+Z walk back and forward through everything done this session.
+// Session-only (not persisted): record IDs assigned by Airtable on create
+// only make sense within the current in-memory state.records.
+
+function pushUndo(action) {
+  state.undoStack.push(action);
+  if (state.undoStack.length > MAX_UNDO_STACK) state.undoStack.shift();
+  state.redoStack = [];
+  renderUndoRedoButtons();
+}
+
+async function applyAction(action, mode) {
+  if (action.op === 'edit') {
+    const value = mode === 'undo' ? action.oldValue : action.newValue;
+    const updated = await api(`/api/records/${action.recordId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ fields: { [action.field]: value } }),
+    });
+    const rec = state.records.find((r) => r.id === action.recordId);
+    if (rec) rec.fields = updated.fields;
+    return;
+  }
+
+  if (action.op === 'create') {
+    if (mode === 'undo') {
+      await api(`/api/records/${action.recordId}`, { method: 'DELETE' });
+      state.records = state.records.filter((r) => r.id !== action.recordId);
+    } else {
+      const created = await api('/api/records', {
+        method: 'POST',
+        body: JSON.stringify({ fields: editableFieldsOnly(action.fields) }),
+      });
+      state.records.push(created);
+      action.recordId = created.id; // Airtable assigns a new id each time it's recreated
+    }
+    return;
+  }
+
+  if (action.op === 'delete') {
+    if (mode === 'undo') {
+      const created = await api('/api/records', {
+        method: 'POST',
+        body: JSON.stringify({ fields: editableFieldsOnly(action.fields) }),
+      });
+      state.records.push(created);
+      action.recordId = created.id;
+      const before = state.recentlyDeleted.length;
+      state.recentlyDeleted = state.recentlyDeleted.filter((d) => d.fields !== action.fields);
+      if (state.recentlyDeleted.length !== before) {
+        saveRecentlyDeleted();
+        renderUndoButton();
+      }
+    } else {
+      await api(`/api/records/${action.recordId}`, { method: 'DELETE' });
+      state.records = state.records.filter((r) => r.id !== action.recordId);
+    }
+  }
+}
+
+function actionDescription(action) {
+  if (action.op === 'edit') return `${action.field} on "${action.label}"`;
+  if (action.op === 'create') return `adding "${action.label}"`;
+  if (action.op === 'delete') return `deleting "${action.label}"`;
+  return action.label || '';
+}
+
+function renderUndoRedoButtons() {
+  el.generalUndoBtn.disabled = state.undoStack.length === 0;
+  el.generalRedoBtn.disabled = state.redoStack.length === 0;
+}
+
+async function undo() {
+  const action = state.undoStack.pop();
+  if (!action) return;
+  renderUndoRedoButtons();
+  setStatus('saving', 'Saving…');
+  try {
+    await applyAction(action, 'undo');
+    state.redoStack.push(action);
+    populateFilterOptions();
+    render();
+    setStatus('synced', 'Synced');
+    showError(null);
+    showActionToast(`Undid ${actionDescription(action)}`);
+  } catch (err) {
+    state.undoStack.push(action); // nothing changed — put it back
+    setStatus('error', 'Undo failed');
+    showError(`Could not undo: ${err.message}`);
+  }
+  renderUndoRedoButtons();
+}
+
+async function redo() {
+  const action = state.redoStack.pop();
+  if (!action) return;
+  renderUndoRedoButtons();
+  setStatus('saving', 'Saving…');
+  try {
+    await applyAction(action, 'redo');
+    state.undoStack.push(action);
+    populateFilterOptions();
+    render();
+    setStatus('synced', 'Synced');
+    showError(null);
+    showActionToast(`Redid ${actionDescription(action)}`);
+  } catch (err) {
+    state.redoStack.push(action);
+    setStatus('error', 'Redo failed');
+    showError(`Could not redo: ${err.message}`);
+  }
+  renderUndoRedoButtons();
 }
 
 function relativeTime(ts) {
@@ -555,7 +686,7 @@ function relativeTime(ts) {
 
 function renderUndoButton() {
   const count = state.recentlyDeleted.length;
-  el.undoBtn.textContent = count > 0 ? `↺ Undo delete (${count})` : '↺ Undo delete';
+  el.undoBtn.textContent = count > 0 ? `🗑 Recently deleted (${count})` : '🗑 Recently deleted';
   renderUndoPanel();
 }
 
@@ -587,19 +718,29 @@ function renderUndoPanel() {
 }
 
 let toastTimer;
-function showUndoToast(entry) {
+function showToast(message, actionLabel, actionFn) {
   clearTimeout(toastTimer);
   el.undoToast.innerHTML = '';
   const text = document.createElement('span');
-  text.textContent = `Deleted "${entry.label}". `;
-  const undoLink = document.createElement('button');
-  undoLink.className = 'undo-toast-btn';
-  undoLink.textContent = 'Undo';
-  undoLink.addEventListener('click', () => restoreDeleted(0));
-  text.appendChild(undoLink);
+  text.textContent = actionLabel ? `${message} ` : message;
+  if (actionLabel) {
+    const link = document.createElement('button');
+    link.className = 'undo-toast-btn';
+    link.textContent = actionLabel;
+    link.addEventListener('click', actionFn);
+    text.appendChild(link);
+  }
   el.undoToast.appendChild(text);
   el.undoToast.classList.remove('hidden');
   toastTimer = setTimeout(hideUndoToast, 8000);
+}
+
+function showUndoToast(entry) {
+  showToast(`Deleted "${entry.label}".`, 'Undo', () => restoreDeleted(0));
+}
+
+function showActionToast(message) {
+  showToast(message);
 }
 
 function hideUndoToast() {
@@ -622,19 +763,29 @@ document.addEventListener('click', (e) => {
 // Ctrl/Cmd+Z restores the most recently deleted row. Skipped while a
 // text-editable field is focused so the browser's own native undo (for
 // whatever you're mid-typing there) keeps working as expected.
+function isTextEditableElement(el) {
+  return (
+    el &&
+    (el.tagName === 'TEXTAREA' ||
+      el.isContentEditable ||
+      (el.tagName === 'INPUT' && el.type !== 'checkbox'))
+  );
+}
+
 document.addEventListener('keydown', (e) => {
-  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z' || e.shiftKey) return;
-  const active = document.activeElement;
-  const isTextEditable =
-    active &&
-    (active.tagName === 'TEXTAREA' ||
-      active.isContentEditable ||
-      (active.tagName === 'INPUT' && active.type !== 'checkbox'));
-  if (isTextEditable) return;
-  if (state.recentlyDeleted.length === 0) return;
+  const key = e.key.toLowerCase();
+  if (!(e.ctrlKey || e.metaKey) || key !== 'z') return;
+  if (isTextEditableElement(document.activeElement)) return; // let native undo handle in-field typing
   e.preventDefault();
-  restoreDeleted(0);
+  if (e.shiftKey) {
+    redo();
+  } else {
+    undo();
+  }
 });
+
+el.generalUndoBtn.addEventListener('click', undo);
+el.generalRedoBtn.addEventListener('click', redo);
 
 // --- Edit history ------------------------------------------------------
 // A local audit log of every change made through this app (field edits,
@@ -848,6 +999,7 @@ state.recentlyDeleted = loadRecentlyDeleted();
 renderUndoButton();
 state.history = loadHistory();
 renderHistoryPanel();
+renderUndoRedoButtons();
 
 (async function init() {
   try {
